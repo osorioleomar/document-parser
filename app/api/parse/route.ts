@@ -1,8 +1,11 @@
 import { LiteParse } from "@llamaindex/liteparse";
 import { NextRequest, NextResponse } from "next/server";
-import { MAX_PARSE_OUTPUT_BYTES, MAX_UPLOAD_BYTES } from "@/lib/constants";
+import { MAX_UPLOAD_BYTES } from "@/lib/constants";
 
 export const runtime = "nodejs";
+
+/** Vercel / long-running parses: raise in dashboard if you hit timeouts. */
+export const maxDuration = 120;
 
 function jsonError(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
@@ -33,29 +36,26 @@ export async function POST(req: NextRequest) {
       return jsonError("File exceeds maximum size after read.", 413);
     }
 
+    const ocrEnabled = process.env.LITEPARSE_OCR_ENABLED !== "false";
+
     const parser = new LiteParse({
-      outputFormat: "text",
-      ocrEnabled: true,
-      numWorkers: 1,
+      ocrEnabled,
     });
 
-    const result = await parser.parse(buffer);
-    let text = (result.text ?? "").trim();
+    // Pass Buffer + optional path-like hint: library accepts path | Buffer | Uint8Array
+    const result = await parser.parse(buffer, true);
 
-    if (text.length > MAX_PARSE_OUTPUT_BYTES) {
-      text = text.slice(0, MAX_PARSE_OUTPUT_BYTES);
-    }
-
+    const text = (result.text ?? "").trim();
     if (!text) {
       return jsonError(
-        "Parser produced no text. For Office or image formats, the server may need LibreOffice or ImageMagick installed; PDFs should work without them.",
+        "Parser returned no text for this file. It may be unsupported on the server (e.g. Office conversion needs LibreOffice, which is not available on typical serverless hosts), or the document may be empty.",
         422,
       );
     }
 
     return NextResponse.json({
       ok: true,
-      parsedText: text,
+      parsedText: result.text,
       originalName: file.name,
     });
   } catch (err: unknown) {

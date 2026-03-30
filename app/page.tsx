@@ -2,10 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { MAX_UPLOAD_BYTES } from "@/lib/constants";
-import { clearDraft, loadDraft, saveDraft } from "@/lib/browserDraft";
+import {
+  clearLastParse,
+  loadLastParse,
+  saveLastParse,
+} from "@/lib/parseStorage";
 
 type ParseResponse =
-  | { ok: true; parsedText: string; originalName: string; stderr?: string }
+  | { ok: true; parsedText: string; originalName: string }
   | { ok: false; error: string };
 
 function baseNameFromFilename(name: string): string {
@@ -20,18 +24,11 @@ export default function Home() {
   const [parsedText, setParsedText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [warnStderr, setWarnStderr] = useState<string | null>(null);
-  const [storageNote, setStorageNote] = useState<string | null>(null);
-
-  useEffect(() => {
-    const draft = loadDraft();
-    if (draft?.parsedText) {
-      setParsedText(draft.parsedText);
-      setStorageNote(
-        `Restored parsed text for “${draft.originalName}” from browser storage (${new Date(draft.savedAt).toLocaleString()}). Re-select the file to preview the original.`,
-      );
-    }
-  }, []);
+  /** Filename when text came from IndexedDB (no File object). */
+  const [storedOriginalName, setStoredOriginalName] = useState<string | null>(
+    null,
+  );
+  const [storageNotice, setStorageNotice] = useState<string | null>(null);
 
   const previewKind = useMemo(() => {
     if (!file) return "none";
@@ -83,21 +80,38 @@ export default function Home() {
       );
       setFile(null);
       setParsedText("");
-      setWarnStderr(null);
       e.target.value = "";
       return;
     }
     setFile(f);
     setParsedText("");
     setError(null);
-    setWarnStderr(null);
+    if (f) {
+      setStoredOriginalName(null);
+      setStorageNotice(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const prev = await loadLastParse();
+      if (cancelled || !prev?.parsedText?.trim()) return;
+      setParsedText(prev.parsedText);
+      setStoredOriginalName(prev.originalName);
+      setStorageNotice(
+        `Restored last parse from this browser (${new Date(prev.savedAt).toLocaleString()}). Re-upload the file to preview the original.`,
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const parse = useCallback(async () => {
     if (!file) return;
     setLoading(true);
     setError(null);
-    setWarnStderr(null);
     setParsedText("");
 
     try {
@@ -117,15 +131,12 @@ export default function Home() {
       }
 
       setParsedText(data.parsedText);
-      setStorageNote(null);
-      saveDraft({
+      setStoredOriginalName(null);
+      setStorageNotice(null);
+      await saveLastParse({
         originalName: data.originalName,
         parsedText: data.parsedText,
-        savedAt: new Date().toISOString(),
       });
-      if (data.stderr) {
-        setWarnStderr(data.stderr);
-      }
     } catch {
       setError("Network error or invalid response.");
     } finally {
@@ -134,8 +145,9 @@ export default function Home() {
   }, [file]);
 
   const downloadMd = useCallback(() => {
-    if (!parsedText.trim() || !file) return;
-    const name = `${baseNameFromFilename(file.name)}.md`;
+    if (!parsedText.trim()) return;
+    const sourceName = file?.name ?? storedOriginalName ?? "document";
+    const name = `${baseNameFromFilename(sourceName)}.md`;
     const blob = new Blob([parsedText], {
       type: "text/markdown;charset=utf-8",
     });
@@ -145,7 +157,14 @@ export default function Home() {
     a.download = name;
     a.click();
     URL.revokeObjectURL(href);
-  }, [parsedText, file]);
+  }, [parsedText, file, storedOriginalName]);
+
+  const clearStored = useCallback(async () => {
+    await clearLastParse();
+    setStoredOriginalName(null);
+    setStorageNotice(null);
+    setParsedText("");
+  }, []);
 
   return (
     <main
@@ -160,9 +179,11 @@ export default function Home() {
           Liteparse
         </h1>
         <p style={{ margin: 0, color: "var(--muted)", fontSize: "0.95rem" }}>
-          Upload a document, parse with LiteParse on the server, compare
-          original and parsed output, then save as Markdown. Last parsed text
-          can be kept in your browser (localStorage) on this device.
+          Upload a document and parse with{" "}
+          <code>@llamaindex/liteparse</code> on the server (no <code>lit</code>{" "}
+          binary required on Vercel). The last successful result is saved in this
+          browser (IndexedDB). Compare original and parsed text, then save as
+          Markdown.
         </p>
       </header>
 
@@ -227,12 +248,8 @@ export default function Home() {
         </button>
         <button
           type="button"
-          onClick={() => {
-            clearDraft();
-            setStorageNote(null);
-            setParsedText("");
-          }}
-          disabled={!parsedText.trim() && !storageNote}
+          onClick={clearStored}
+          disabled={!parsedText.trim() && !storedOriginalName}
           style={{
             padding: "0.5rem 1rem",
             borderRadius: 8,
@@ -241,10 +258,12 @@ export default function Home() {
             color: "var(--muted)",
             fontWeight: 600,
             cursor:
-              !parsedText.trim() && !storageNote ? "not-allowed" : "pointer",
+              !parsedText.trim() && !storedOriginalName
+                ? "not-allowed"
+                : "pointer",
           }}
         >
-          Clear stored text
+          Clear saved parse
         </button>
         {file && (
           <span style={{ fontSize: "0.8rem", color: "var(--muted)" }}>
@@ -253,20 +272,19 @@ export default function Home() {
         )}
       </section>
 
-      {storageNote && (
+      {storageNotice && (
         <div
           style={{
             marginBottom: "1rem",
             padding: "0.75rem 1rem",
             borderRadius: 8,
-            background: "rgba(96,165,250,0.1)",
-            border: "1px solid rgba(96,165,250,0.35)",
-            color: "var(--text)",
-            fontSize: "0.9rem",
-            whiteSpace: "pre-wrap",
+            background: "rgba(59,130,246,0.1)",
+            border: "1px solid var(--accent)",
+            color: "var(--muted)",
+            fontSize: "0.875rem",
           }}
         >
-          {storageNote}
+          {storageNotice}
         </div>
       )}
 
@@ -285,23 +303,6 @@ export default function Home() {
           }}
         >
           {error}
-        </div>
-      )}
-
-      {warnStderr && (
-        <div
-          style={{
-            marginBottom: "1rem",
-            padding: "0.75rem 1rem",
-            borderRadius: 8,
-            background: "rgba(251,191,36,0.1)",
-            border: "1px solid #fbbf24",
-            color: "#fcd34d",
-            fontSize: "0.85rem",
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          Parser stderr: {warnStderr}
         </div>
       )}
 
@@ -444,7 +445,7 @@ export default function Home() {
             placeholder={
               loading
                 ? "Waiting for parser…"
-                : "Parsed output appears here."
+                : "Parsed text from LiteParse appears here."
             }
             style={{
               flex: 1,

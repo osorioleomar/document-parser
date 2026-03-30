@@ -1,25 +1,27 @@
 # Liteparse UI
 
-A small **Next.js** app: upload a document, click **Parse**, see the **original** and **parsed text** side by side, then **save the parsed output as a `.md` file**. Parsing uses the **`@llamaindex/liteparse`** library on the server (same engine as the `lit` CLI), so deploys like **Vercel** do not need a global `lit` binary.
+A small **Next.js** app: upload a document, click **Parse**, see the **original** and **parsed text** side by side, then **save the parsed output as a `.md` file**.
+
+Parsing uses the **`@llamaindex/liteparse`** library on the **server** (the same engine as the `lit` CLI). You do **not** need the `lit` binary installed on **Vercel** or other hosts—only the npm dependency.
+
+The **last successful parse** is stored in the **browser** with **IndexedDB** (not on the server), so revisiting the app can restore the parsed text without uploading again. Re-upload the file if you need the original preview.
 
 ---
 
 ## Prerequisites
 
-- **Node.js** — use a current LTS version (Next.js 15 generally expects **Node 18.18+**; **20+** is a safe choice).
-- **npm** (or another compatible package manager).
+- **Node.js** — Next.js 15 generally expects **Node 18.18+**; **20+** is a safe choice.
+- **npm** (or pnpm/yarn).
 
 ---
 
 ## How to set it up
 
-### 1. Clone or open the project
+### 1. Open the project
 
 ```bash
-cd /path/to/document-parser
+cd /path/to/parser
 ```
-
-(Use your actual project folder path.)
 
 ### 2. Install dependencies
 
@@ -35,7 +37,7 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-### 4. Production build (optional)
+### 4. Production build
 
 ```bash
 npm run build
@@ -44,50 +46,56 @@ npm start
 
 ---
 
+## Vercel and serverless
+
+- The API route imports **`LiteParse`** from `@llamaindex/liteparse` and parses the uploaded bytes in Node—**no shell `lit` command**.
+- [`next.config.ts`](next.config.ts) sets **`serverExternalPackages`** for `@llamaindex/liteparse` and **`sharp`** so the server bundle resolves native assets correctly.
+- **PDFs** are a good fit for serverless. **Office formats** (DOCX, etc.) may require **LibreOffice** on the machine for conversion; typical **Vercel** images do **not** include it, so those formats may fail there while **PDF** works.
+- Large documents can hit **function duration / memory** limits—raise **maxDuration** in [`app/api/parse/route.ts`](app/api/parse/route.ts) and your Vercel plan limits if needed.
+
+---
+
 ## npm scripts
 
-| Command        | Description              |
-| -------------- | ------------------------ |
-| `npm run dev`  | Development server       |
-| `npm run build`| Production build         |
-| `npm start`    | Serve production build   |
-| `npm run lint` | ESLint (Next.js config)  |
+| Command         | Description             |
+| --------------- | ----------------------- |
+| `npm run dev`   | Development server      |
+| `npm run build` | Production build        |
+| `npm start`     | Serve production build  |
+| `npm run lint`  | ESLint (Next.js config) |
 
 ---
 
 ## What it does
 
 - **Upload** — pick a file in the browser.
-- **Parse** — sends the file to **`POST /api/parse`**; the server runs **LiteParse** on the bytes (no separate `lit` CLI).
-- **Side by side** — left: preview when the browser can (PDF, images, text, simple HTML); right: parsed text.
-- **Save as .md** — downloads the parsed text as a Markdown file.
-- **Browser storage** — after a successful parse, the app saves the **parsed text** and **original filename** in **localStorage** on this device. Reloading the page restores that text (you still need to choose the file again for a full preview).
+- **Parse** — `POST /api/parse` runs **LiteParse** on the file bytes in Node (no temp upload folder required for PDF; other formats may use temp files inside the library).
+- **Side by side** — left: in-browser preview when possible (PDF, images, text, HTML); right: parsed text.
+- **Save as .md** — downloads the parsed text.
+- **IndexedDB** — after a successful parse, the app saves **original filename + parsed text** locally. On the next visit, it can **restore** that text (use **Clear saved parse** to remove it).
 
 ---
 
-## Deployment (e.g. Vercel)
+## Configuration (environment)
 
-- Install dependencies and deploy as a normal Next.js app. You do **not** need `LIT_CLI_PATH` or `lit` on `PATH`.
-- **PDFs** (and formats LiteParse can handle without extra system tools) work in serverless.
-- **Office documents** (Word, Excel, etc.) and some image pipelines may require **LibreOffice** / **ImageMagick** on the host. Those are **not** available on default Vercel serverless; use a **container/VM** or parse **PDFs** in that environment.
+| Variable                  | Required | Description |
+| ------------------------- | -------- | ----------- |
+| `LITEPARSE_OCR_ENABLED`   | No       | Set to `false` to disable OCR (faster, worse on scanned PDFs). Default: OCR on. |
 
----
-
-## Configuration
-
-There is no required environment variable for basic operation. Optional LiteParse options (OCR language, tessdata path, etc.) can be added in [`app/api/parse/route.ts`](app/api/parse/route.ts) via the `LiteParse` constructor.
+Tesseract language data may download on first OCR use unless you configure offline tessdata (see [LiteParse docs](https://developers.llamaindex.ai/liteparse/)).
 
 ---
 
 ## Limits
 
 - Max upload size: **50 MB** (see [`lib/constants.ts`](lib/constants.ts)).
-- Parsed output is capped (see `MAX_PARSE_OUTPUT_BYTES` in [`lib/constants.ts`](lib/constants.ts)).
+- API route sets **`maxDuration`** (see [`app/api/parse/route.ts`](app/api/parse/route.ts)) for long parses.
 
 ---
 
 ## Troubleshooting
 
-- **Build errors involving `liteparse` / PDF workers** — the app lists `@llamaindex/liteparse` and related packages in `serverExternalPackages` in [`next.config.ts`](next.config.ts) so Next does not break dynamic PDF assets.
-- **Empty or error output for Office/image files on Vercel** — confirm the format is supported without extra binaries, or run the app where LibreOffice/ImageMagick are installed.
+- **Parse errors on Vercel for Office files** — conversion often needs **LibreOffice**, which is not available on default Vercel. Try **PDF** uploads, or run the app on a **VPS/Docker** image where you can install LibreOffice.
+- **Timeouts** — increase Vercel **function duration** and/or simplify documents (fewer pages, lower DPI via LiteParse config if you extend the route).
+- **IndexedDB** — private browsing or blocked storage may prevent saving; parsing still works session-to-session.
 - **Lint / type errors after clone** — run `npm install`, then `npm run lint`.
