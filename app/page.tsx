@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { MAX_UPLOAD_BYTES } from "@/lib/constants";
+import { clearDraft, loadDraft, saveDraft } from "@/lib/browserDraft";
 
 type ParseResponse =
   | { ok: true; parsedText: string; originalName: string; stderr?: string }
@@ -20,6 +21,17 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warnStderr, setWarnStderr] = useState<string | null>(null);
+  const [storageNote, setStorageNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    const draft = loadDraft();
+    if (draft?.parsedText) {
+      setParsedText(draft.parsedText);
+      setStorageNote(
+        `Restored parsed text for “${draft.originalName}” from browser storage (${new Date(draft.savedAt).toLocaleString()}). Re-select the file to preview the original.`,
+      );
+    }
+  }, []);
 
   const previewKind = useMemo(() => {
     if (!file) return "none";
@@ -105,6 +117,12 @@ export default function Home() {
       }
 
       setParsedText(data.parsedText);
+      setStorageNote(null);
+      saveDraft({
+        originalName: data.originalName,
+        parsedText: data.parsedText,
+        savedAt: new Date().toISOString(),
+      });
       if (data.stderr) {
         setWarnStderr(data.stderr);
       }
@@ -142,8 +160,9 @@ export default function Home() {
           Liteparse
         </h1>
         <p style={{ margin: 0, color: "var(--muted)", fontSize: "0.95rem" }}>
-          Upload a document, run <code>lit parse</code> on the server, compare
-          original and parsed output, then save as Markdown.
+          Upload a document, parse with LiteParse on the server, compare
+          original and parsed output, then save as Markdown. Last parsed text
+          can be kept in your browser (localStorage) on this device.
         </p>
       </header>
 
@@ -206,12 +225,50 @@ export default function Home() {
         >
           Save as .md
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            clearDraft();
+            setStorageNote(null);
+            setParsedText("");
+          }}
+          disabled={!parsedText.trim() && !storageNote}
+          style={{
+            padding: "0.5rem 1rem",
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "transparent",
+            color: "var(--muted)",
+            fontWeight: 600,
+            cursor:
+              !parsedText.trim() && !storageNote ? "not-allowed" : "pointer",
+          }}
+        >
+          Clear stored text
+        </button>
         {file && (
           <span style={{ fontSize: "0.8rem", color: "var(--muted)" }}>
             {file.name} · {(file.size / 1024).toFixed(1)} KB
           </span>
         )}
       </section>
+
+      {storageNote && (
+        <div
+          style={{
+            marginBottom: "1rem",
+            padding: "0.75rem 1rem",
+            borderRadius: 8,
+            background: "rgba(96,165,250,0.1)",
+            border: "1px solid rgba(96,165,250,0.35)",
+            color: "var(--text)",
+            fontSize: "0.9rem",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {storageNote}
+        </div>
+      )}
 
       {error && (
         <div
@@ -387,7 +444,7 @@ export default function Home() {
             placeholder={
               loading
                 ? "Waiting for parser…"
-                : "Parsed output from `lit parse` appears here."
+                : "Parsed output appears here."
             }
             style={{
               flex: 1,

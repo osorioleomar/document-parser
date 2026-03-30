@@ -1,6 +1,6 @@
 # Liteparse UI
 
-A small **Next.js** app: upload a document (types your **Liteparse** CLI accepts), click **Parse**, see the **original** and **parsed text** side by side, then **save the parsed output as a `.md` file**.
+A small **Next.js** app: upload a document, click **Parse**, see the **original** and **parsed text** side by side, then **save the parsed output as a `.md` file**. Parsing uses the **`@llamaindex/liteparse`** library on the server (same engine as the `lit` CLI), so deploys like **Vercel** do not need a global `lit` binary.
 
 ---
 
@@ -8,7 +8,6 @@ A small **Next.js** app: upload a document (types your **Liteparse** CLI accepts
 
 - **Node.js** — use a current LTS version (Next.js 15 generally expects **Node 18.18+**; **20+** is a safe choice).
 - **npm** (or another compatible package manager).
-- **Liteparse** installed on the machine that runs the Next.js **server**, with the `lit` command working in a terminal (e.g. `lit parse yourfile.pdf`).
 
 ---
 
@@ -17,7 +16,7 @@ A small **Next.js** app: upload a document (types your **Liteparse** CLI accepts
 ### 1. Clone or open the project
 
 ```bash
-cd /path/to/parser
+cd /path/to/document-parser
 ```
 
 (Use your actual project folder path.)
@@ -28,40 +27,7 @@ cd /path/to/parser
 npm install
 ```
 
-### 3. Make sure `lit` is available to the server
-
-Parsing runs **on the server** inside `app/api/parse/route.ts`. The process must be able to run:
-
-```bash
-lit parse <path-to-temp-file>
-```
-
-- If `lit` works in your terminal but **fails in the app**, the dev server often has a **narrower `PATH`** (common on macOS when launching the editor or IDE from the GUI). Fix it in one of these ways:
-
-  **Option A — full path to the executable**
-
-  ```bash
-  export LIT_CLI_PATH=/full/path/to/lit
-  npm run dev
-  ```
-
-  To find the path:
-
-  ```bash
-  which lit
-  ```
-
-  **Option B — `.env.local` (recommended for local dev)**
-
-  Create a file named `.env.local` in the project root:
-
-  ```env
-  LIT_CLI_PATH=/full/path/to/lit
-  ```
-
-  Next.js loads this automatically. Restart `npm run dev` after changing it.
-
-### 4. Run the app (development)
+### 3. Run the app (development)
 
 ```bash
 npm run dev
@@ -69,14 +35,12 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-### 5. Production build (optional)
+### 4. Production build (optional)
 
 ```bash
 npm run build
 npm start
 ```
-
-Use the same `PATH` / `LIT_CLI_PATH` setup for the environment that runs `npm start` (your host, process manager, or container).
 
 ---
 
@@ -94,30 +58,36 @@ Use the same `PATH` / `LIT_CLI_PATH` setup for the environment that runs `npm st
 ## What it does
 
 - **Upload** — pick a file in the browser.
-- **Parse** — sends the file to **`POST /api/parse`**; the server writes a temporary file, runs `lit parse` on it, then deletes the temp file.
+- **Parse** — sends the file to **`POST /api/parse`**; the server runs **LiteParse** on the bytes (no separate `lit` CLI).
 - **Side by side** — left: preview when the browser can (PDF, images, text, simple HTML); right: parsed text.
 - **Save as .md** — downloads the parsed text as a Markdown file.
+- **Browser storage** — after a successful parse, the app saves the **parsed text** and **original filename** in **localStorage** on this device. Reloading the page restores that text (you still need to choose the file again for a full preview).
 
-The API expects parsed content on **`stdout`**. If your CLI only writes to a file, change [`app/api/parse/route.ts`](app/api/parse/route.ts) to read that output.
+---
+
+## Deployment (e.g. Vercel)
+
+- Install dependencies and deploy as a normal Next.js app. You do **not** need `LIT_CLI_PATH` or `lit` on `PATH`.
+- **PDFs** (and formats LiteParse can handle without extra system tools) work in serverless.
+- **Office documents** (Word, Excel, etc.) and some image pipelines may require **LibreOffice** / **ImageMagick** on the host. Those are **not** available on default Vercel serverless; use a **container/VM** or parse **PDFs** in that environment.
 
 ---
 
 ## Configuration
 
-| Variable        | Required | Description |
-| --------------- | -------- | ----------- |
-| `LIT_CLI_PATH`  | No       | Absolute path to the `lit` binary if it is not on the server `PATH`. |
+There is no required environment variable for basic operation. Optional LiteParse options (OCR language, tessdata path, etc.) can be added in [`app/api/parse/route.ts`](app/api/parse/route.ts) via the `LiteParse` constructor.
 
 ---
 
 ## Limits
 
 - Max upload size: **50 MB** (see [`lib/constants.ts`](lib/constants.ts)).
+- Parsed output is capped (see `MAX_PARSE_OUTPUT_BYTES` in [`lib/constants.ts`](lib/constants.ts)).
 
 ---
 
 ## Troubleshooting
 
-- **`Could not run the parser CLI`** — `lit` is missing for the Node process. Set `LIT_CLI_PATH` or fix `PATH` for the environment that runs `npm run dev` / `npm start`.
-- **Empty or error output** — confirm in a terminal that `lit parse <file>` prints the text you want to **stdout** for that file type.
+- **Build errors involving `liteparse` / PDF workers** — the app lists `@llamaindex/liteparse` and related packages in `serverExternalPackages` in [`next.config.ts`](next.config.ts) so Next does not break dynamic PDF assets.
+- **Empty or error output for Office/image files on Vercel** — confirm the format is supported without extra binaries, or run the app where LibreOffice/ImageMagick are installed.
 - **Lint / type errors after clone** — run `npm install`, then `npm run lint`.
