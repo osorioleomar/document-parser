@@ -50,6 +50,8 @@ npm start
 
 - The API route imports **`LiteParse`** from `@llamaindex/liteparse` and parses the uploaded bytes in Node—**no shell `lit` command**.
 - [`next.config.ts`](next.config.ts) sets **`serverExternalPackages`** for `@llamaindex/liteparse` and **`sharp`** so the server bundle resolves native assets correctly.
+- **`outputFileTracingIncludes`** for **`/api/parse`** pulls in **`@llamaindex/liteparse/dist/**/*`** so PDF.js can load **`pdf.worker.mjs`** on Vercel (fixes “Setting up fake worker failed / Cannot find module … pdf.worker.mjs”).
+- **`outputFileTracingRoot`** is set to this project directory if a **parent folder** has another `package-lock.json`, so file tracing does not miss `node_modules` paths.
 - **PDFs** are a good fit for serverless. **Office formats** (DOCX, etc.) may require **LibreOffice** on the machine for conversion; typical **Vercel** images do **not** include it, so those formats may fail there while **PDF** works.
 - Large documents can hit **function duration / memory** limits—raise **maxDuration** in [`app/api/parse/route.ts`](app/api/parse/route.ts) and your Vercel plan limits if needed.
 
